@@ -182,3 +182,9 @@ cython_debug/
 
 
 .vscode/extensions.json
+
+# Next js 
+node_modules/
+.next/
+.swc/
+.*.env
