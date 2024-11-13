@@ -58,3 +58,7 @@ CREATE TABLE retailer_pages_embeddings (
     embedding vector(1536)
 
 );
+
+-- To run post insertion of data
+--CREATE INDEX ON retailer_pages_embeddings USING ivfflat (embedding vector_ip_ops);
+--CREATE INDEX ON retailer_pages_embeddings USING ivfflat (embedding vector_l2_ops);

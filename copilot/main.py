@@ -1,15 +1,15 @@
 
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
-from llama_index.core import VectorStoreIndex, Settings, Document
-from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.openai import OpenAIEmbedding
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from pgvector.psycopg2 import register_vector
+from openai import OpenAI
 
 
 import os
+import numpy as np
+import psycopg2
 import json
 
 app = FastAPI()
@@ -27,32 +27,66 @@ app.add_middleware(
     allow_headers=["*"],    # Allow all headers
 )
 
-# 1. Load your data
-## TODO(mkedia): Replace with pg 
-with open('../data/products.json', 'r') as f:
-    data = json.load(f)
-
-
-documents = []
-for product in data:
-    # TODO(mkedia): 
-    #   Add price / images
-    #   Add full HTML 
-    doc = Document(
-            text=product['html'],
-            metadata={'name':product['name'], 'url':product['link']})
-    documents.append(doc)
-
-# 2. Initialize LLM and ServiceContext
 load_dotenv()
 openai_api_key = os.getenv('OPENAI_API_KEY')
-Settings.llm = OpenAI(temperature=0, model_name="gpt-3.5-turbo", openai_api_key=openai_api_key)
-Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
 
-# 3. Create a LlamaIndex index
-index = VectorStoreIndex.from_documents(documents, embed_model=Settings.embed_model, similarity_top_k=100)
-query_engine = index.as_query_engine(llm=Settings.llm)
+openai_client =  OpenAI(
+    api_key=openai_api_key, 
+)
 
+conn = psycopg2.connect(
+    host=os.getenv('POSTGRES_HOST'),
+    database=os.getenv('POSTGRES_DB'),
+    user=os.getenv('POSTGRES_USER'),
+    password=os.getenv('POSTGRES_PASSWORD'),
+)
+register_vector(conn)
+
+def getEmbedding(text: str):
+    return openai_client.embeddings.create(
+        input=text,
+        model="text-embedding-3-small"
+    ).data[0].embedding
+
+def getContextFromDB(embedding):
+    embedding = np.array(embedding)
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT url, text FROM retailer_pages_embeddings ORDER BY embedding <-> %s LIMIT 40;", (embedding,))
+        results = cur.fetchall()
+    except psycopg2.Error as e:
+        print(f"Error: {e}")
+    
+    urls = set()
+    context = []
+    for row in results:
+        urls.add(row[0])
+        context.append(row[1])
+    return urls, '.'.join(context)
+
+def get_completion_from_context(context, query, model="gpt-4o", temperature=0, max_tokens=1000):
+    
+    delimiter = "```"
+
+    overarching_prompt = f"""
+    You are a friendly chatbot.\
+    You can answer questions based on provided information 
+    """
+
+    messages = [
+        {"role": "system", "content": overarching_prompt},
+        {"role": "user", "content": f"{delimiter}{query}{delimiter}"},
+        {"role": "assistant", "content": f"Relevant information: \n {context}"}   
+    ]
+
+    response = openai_client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature, 
+        max_tokens=max_tokens, 
+    )
+    return response.choices[0].message.content
+    
 # 4. Define the chat API endpoint
 class ChatMessage(BaseModel):
     message: str
@@ -69,49 +103,19 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Construct the query with chat history
             query_str = " ".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
-            response = query_engine.query(query_str)
+            query_embed = getEmbedding(data)
+            urls, context = getContextFromDB(query_embed)
+
+            response = get_completion_from_context(context, data) 
             
             chat_history.append({"role": "assistant", "content": str(response)})
-            sources = set([source['url'] for source in response.metadata.values()])
             await websocket.send_text(str(response))
-            await websocket.send_text("Sourced from: " + ','.join(sources))
+            await websocket.send_text("Sourced from: \n" + ',\n'.join(urls))
 
         except Exception as e:
             print(f"Error: {e}")
             break
 
-
-# 5. Simple HTML for the chat interface
-html = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Chat with LlamaIndex</title>
-</head>
-<body>
-    <h1>Chat with LlamaIndex</h1>
-    <input type="text" id="messageBox" autocomplete="off" placeholder="Type your message here..." />
-    <button onclick="sendMessage()">Send</button>
-    <div id="chatbox"></div>
-    <script>
-        var websocket = new WebSocket("ws://localhost:8000/chat");
-        websocket.onmessage = function(event) {
-            document.getElementById('chatbox').innerHTML += '<p><b>Assistant:</b> ' + event.data + '</p>';
-        };
-        function sendMessage() {
-            var messageBox = document.getElementById('messageBox');
-            websocket.send(messageBox.value);
-            document.getElementById('chatbox').innerHTML += '<p><b>You:</b> ' + messageBox.value + '</p>';
-            messageBox.value = '';
-        }
-    </script>
-</body>
-</html>
-"""
-
-@app.get("/")
-async def get():
-    return HTMLResponse(html)
 
 # 6. Run the API
 if __name__ == "__main__":
