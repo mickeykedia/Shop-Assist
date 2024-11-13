@@ -4,6 +4,7 @@ import re
 from bs4 import BeautifulSoup
 from scrapy.linkextractors import LinkExtractor
 from scrapy.spiders import CrawlSpider, Rule
+from productinfo.items import ProductInfoItem
 
 class LinkSpider(CrawlSpider):
     name = "link"
@@ -41,15 +42,15 @@ class LinkSpider(CrawlSpider):
                 for script in soup(["script", "style"]):
                   script.extract()
                 html_text = soup.get_text()
+                product = ProductInfoItem()
 
-                yield {
-                    'name': soup.h1.text,
-                    #'description': soup.find('div', class_='cs-description').text,
-                    'description': description,
-                    'discount_price': soup.find('div', class_='discount-price').find("span", id='discount-price').text,
-                    'total_price': soup.find('div', class_='total-price').find("span", id='total-price').text,
-                    'currency': soup.find('div', class_='discount-price').find("span", class_='last').text,
-                    'link': response.url,
-                    'images': image_arr,
-                    'html': html_text,
-                }
+                product['url']=response.url
+                product['html']= html_text
+                product['name']= soup.h1.text
+                #'description': soup.find('div', class_='cs-description').text,
+                product['description']= description
+                product['discount_price'] = soup.find('div', class_='discount-price').find("span", id='discount-price').text
+                product['total_price'] = soup.find('div', class_='total-price').find("span", id='total-price').text
+                product['currency']= soup.find('div', class_='discount-price').find("span", class_='last').text
+                product['images']= image_arr
+                yield product

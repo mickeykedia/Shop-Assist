@@ -30,7 +30,6 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
 
 -- create Tables
-
 CREATE TABLE retailer (
     id bigserial primary key,
     name VARCHAR(255)
@@ -45,6 +44,17 @@ CREATE TABLE retailer_pages (
     html text,
     description text,
     -- Think about splitting this out in a separate table later on.
-    images text,
-    embedding_large vector(3072)
+    images text
+);
+
+CREATE TABLE retailer_pages_embeddings (
+    id bigserial primary key,
+    retailer_id INT,
+    FOREIGN KEY (retailer_id) REFERENCES retailer(id),
+    -- ID specific to a URL
+    text_id VARCHAR(127),
+    url VARCHAR,
+    text VARCHAR,
+    embedding vector(1536)
+
 );
