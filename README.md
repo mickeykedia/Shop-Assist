@@ -36,6 +36,14 @@
 ### Running Copilot BE
 
 - Navigate to `copilot/` directory
+- Create a `.env` file in the `copilot/` directory
+- Populate it with env variables:
+- Populate it with env variables:
+  - POSTGRES_DB
+  - POSTGRES_HOST
+  - POSTGRES_USER
+  - POSTGRES_PASSWORD
+  - OPENAI_API_KEY
 - run `pip install -r requirements.txt`
 - run `uvicorn main:app --reload`
 
