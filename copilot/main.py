@@ -1,16 +1,16 @@
 
 from fastapi import FastAPI, WebSocket
-from pydantic import BaseModel
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from pgvector.psycopg2 import register_vector
-from openai import OpenAI
-
+from llama_index.core import VectorStoreIndex, Settings
+from llama_index.llms.openai import OpenAI
+from llama_index.vector_stores.postgres import PGVectorStore
+from llama_index.embeddings.openai import OpenAIEmbedding
+from pydantic import BaseModel
 
 import os
 import numpy as np
-import psycopg2
-import json
+import openai
 
 app = FastAPI()
 
@@ -28,65 +28,31 @@ app.add_middleware(
 )
 
 load_dotenv()
+openai.api_key = os.getenv('OPENAI_API_KEY')
 openai_api_key = os.getenv('OPENAI_API_KEY')
+Settings.llm = OpenAI(temperature=0, model_name="gpt-3.5-turbo", openai_api_key=openai_api_key)
+# Has to be aligned with productinfo/productinfo/pipelines.py
+Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small")
 
-openai_client =  OpenAI(
-    api_key=openai_api_key, 
-)
-
-conn = psycopg2.connect(
-    host=os.getenv('POSTGRES_HOST'),
+vector_store = PGVectorStore.from_params(
     database=os.getenv('POSTGRES_DB'),
-    user=os.getenv('POSTGRES_USER'),
+    host=os.getenv('POSTGRES_HOST'),
     password=os.getenv('POSTGRES_PASSWORD'),
+    port=5432,
+    user=os.getenv('POSTGRES_USER'),
+    # TODO(mkedia): Pass this as an argument from the command line
+    table_name="bear_mattress",
+    embed_dim=1536,
+    hnsw_kwargs={
+        "hnsw_m": 16,
+        "hnsw_ef_construction": 64,
+        "hnsw_ef_search": 40,
+        "hnsw_dist_method": "vector_cosine_ops",
+    },
 )
-register_vector(conn)
+vector_index = VectorStoreIndex.from_vector_store(vector_store=vector_store, embed_model=Settings.embed_model)
+query_engine = vector_index.as_query_engine(llm=Settings.llm)
 
-def getEmbedding(text: str):
-    return openai_client.embeddings.create(
-        input=text,
-        model="text-embedding-3-small"
-    ).data[0].embedding
-
-def getContextFromDB(embedding):
-    embedding = np.array(embedding)
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT url, text FROM retailer_pages_embeddings ORDER BY embedding <-> %s LIMIT 40;", (embedding,))
-        results = cur.fetchall()
-    except psycopg2.Error as e:
-        print(f"Error: {e}")
-    
-    urls = set()
-    context = []
-    for row in results:
-        urls.add(row[0])
-        context.append(row[1])
-    return urls, '.'.join(context)
-
-def get_completion_from_context(context, query, model="gpt-4o", temperature=0, max_tokens=1000):
-    
-    delimiter = "```"
-
-    overarching_prompt = f"""
-    You are a friendly chatbot.\
-    You can answer questions based on provided information 
-    """
-
-    messages = [
-        {"role": "system", "content": overarching_prompt},
-        {"role": "user", "content": f"{delimiter}{query}{delimiter}"},
-        {"role": "assistant", "content": f"Relevant information: \n {context}"}   
-    ]
-
-    response = openai_client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature, 
-        max_tokens=max_tokens, 
-    )
-    return response.choices[0].message.content
-    
 # 4. Define the chat API endpoint
 class ChatMessage(BaseModel):
     message: str
@@ -103,14 +69,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Construct the query with chat history
             query_str = " ".join([f"{msg['role']}: {msg['content']}" for msg in chat_history])
-            query_embed = getEmbedding(data)
-            urls, context = getContextFromDB(query_embed)
-
-            response = get_completion_from_context(context, data) 
+            response = query_engine.query(query_str)
             
             chat_history.append({"role": "assistant", "content": str(response)})
+            sources = set([source['url'] for source in response.metadata.values()])
+
             await websocket.send_text(str(response))
-            await websocket.send_text("Sourced from: \n" + ',\n'.join(urls))
+            await websocket.send_text("Sourced from: \n" + ',\n'.join(sources))
 
         except Exception as e:
             print(f"Error: {e}")
