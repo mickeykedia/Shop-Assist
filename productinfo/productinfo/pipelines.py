@@ -8,10 +8,15 @@
 import psycopg2
 import os
 from openai import OpenAI
+import openai
 
 from dotenv import load_dotenv
 from itemadapter import ItemAdapter
 from pgvector.psycopg2 import register_vector
+from llama_index.core import StorageContext
+from llama_index.core import VectorStoreIndex
+from llama_index.vector_stores.postgres import PGVectorStore
+from llama_index.core import Document
 
 def split_text(text:str, chunk_size: int=500):
     sentences = text.replace('\n', ' ').split('. ')
@@ -48,6 +53,39 @@ def process_document(html: str, url: str):
     ids = [str(i) for i in range(len(chunks))]
 
     return ids, chunks, metadatas
+
+class ProductInfoPipelineWithLlamaIndex(object):
+    """
+    Pipeline for storing documents to Postgres Vector DB using LlamaIndex.
+    Handles the text processing / embedding generation on its own.
+    """
+    def __init__(self):
+        load_dotenv()
+        openai.api_key = os.getenv('OPENAI_API_KEY')
+        self.vector_store = PGVectorStore.from_params(
+            database=os.getenv('POSTGRES_DB'),
+            host=os.getenv('POSTGRES_HOST'),
+            password=os.getenv('POSTGRES_PASSWORD'),
+            port=5432,
+            user=os.getenv('POSTGRES_USER'),
+            # TODO(mkedia): Pass this as an argument from the command line
+            table_name="bear_mattress",
+            embed_dim=1536,
+            hnsw_kwargs={
+                "hnsw_m": 16,
+                "hnsw_ef_construction": 64,
+                "hnsw_ef_search": 40,
+                "hnsw_dist_method": "vector_cosine_ops",
+            },
+        )
+        self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
+        self.vector_index = VectorStoreIndex(nodes=[], storage_context=self.storage_context)
+
+    def process_item(self, item, spider):
+        document = Document(text=item['html'],
+                            metadata={"url": item['url']})
+        self.vector_index.insert(document)
+
 
 class ProductInfoPipeline(object):
     def __init__(self):
