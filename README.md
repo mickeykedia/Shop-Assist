@@ -22,6 +22,12 @@
   - OPENAI_API_KEY
 - TODO: Instructions to setup depedencies (including separate pip env)
 - Make sure the Postgres DB is setup as described in the `data/setup_db.sql` file
+- Couple of optional DB related things. 
+  - Assumes that there is a retailer with id = 1 in the DB
+  - Might want to use that `INSERT INTO retailer(id, name) VALUES (1, 'bear mattresses');`
+  - If remote DB (say on Google Cloud) need to add your ip address to allowed ip addresses on the Cloud SQL config
+    - Go to http://ipv4.whatismyv6.com/ and add the IP address you see.
+  - Try connection from local machine to DB using `psql -h IP.Address. -p 5432 -U postgres -d DBNAME`
 - From the `productinfo` directory, run
   ```
   scrapy crawl link -a domain=www.bearmattress.com
