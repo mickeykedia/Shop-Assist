@@ -16,7 +16,10 @@ const HomePage: React.FC = () => {
 
   useEffect(() => {
 
-    const ws = new WebSocket('ws://localhost:8000/chat'); // Replace with your API endpoint
+    const backendHost= process.env.NEXT_PUBLIC_BACKEND_HOST || 'localhost';
+    console.log("backend host: ", backendHost);
+
+    const ws = new WebSocket(`ws://${backendHost}:8000/chat`); // Replace with your API endpoint
     ws.onopen = () => {
       console.log('WebSocket connected');
       setWebsocket(ws)
